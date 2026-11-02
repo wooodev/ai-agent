@@ -3,6 +3,7 @@
 
 # 원본 데이터 (용량, 재배포 확인 전)
 data/raw/
+data/processed/
 *.zip
 
 # 파이썬
