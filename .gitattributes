@@ -1,0 +1,2 @@
+# 리눅스 컨테이너의 psql이 읽는다
+db/init.sql text eol=lf
