@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>따릉이 물어보기</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2125; --muted: #5f6b76; --line: #d9dee3;
+    --panel: #f5f7f9; --accent: #1a7f4b; --error: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181b; --fg: #e6e9ec; --muted: #9aa5af; --line: #333a41;
+      --panel: #1e2227; --accent: #4cc38a; --error: #f2b8b5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 system-ui, -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .period { color: var(--muted); margin: 0 0 20px; font-size: .9rem; }
+  form.ask { display: flex; gap: 8px; }
+  input, textarea, button { font: inherit; color: inherit; }
+  input[type=text], textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--bg);
+  }
+  textarea { font-family: ui-monospace, Consolas, monospace; font-size: .9rem; min-height: 110px; resize: vertical; }
+  button {
+    padding: 10px 16px; border: 0; border-radius: 8px; background: var(--accent);
+    color: #fff; cursor: pointer; white-space: nowrap;
+  }
+  button:disabled { opacity: .5; cursor: wait; }
+  section { margin-top: 24px; }
+  .label { color: var(--muted); font-size: .85rem; margin: 16px 0 4px; display: block; }
+  .answer { font-size: 1.5rem; font-weight: 600; }
+  .reason { color: var(--muted); }
+  .error { color: var(--error); margin-top: 16px; white-space: pre-wrap; }
+  .edited { color: var(--accent); font-size: .85rem; margin-left: 8px; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; margin-top: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { background: var(--panel); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  ol.history { padding-left: 20px; color: var(--muted); font-size: .85rem; }
+  ol.history code { white-space: pre-wrap; word-break: break-all; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>따릉이 물어보기</h1>
+  <p class="period">서울 따릉이 대여소 간 이용 기록 · 2026-10-22(목) ~ 10-26(월) · 출발 기준</p>
+
+  <form class="ask" id="ask-form">
+    <input type="text" id="question" placeholder="예: 평일 아침 8시대에 출발이 가장 많은 동네 3곳은?" maxlength="200" required>
+    <button type="submit" id="ask-button">질문</button>
+  </form>
+
+  <p class="error" id="error" hidden></p>
+
+  <section id="result" hidden>
+    <span class="label">답<span class="edited" id="edited" hidden>고친 SQL로 실행함</span></span>
+    <div class="answer" id="answer"></div>
+    <div class="reason" id="reason" hidden></div>
+
+    <label class="label" for="interpretation">해석 (고칠 수 있다)</label>
+    <input type="text" id="interpretation">
+
+    <div id="sql-block">
+      <label class="label" for="sql">실행한 SQL (고칠 수 있다)</label>
+      <textarea id="sql" spellcheck="false"></textarea>
+      <p><button type="button" id="rerun-button">고친 SQL로 다시 실행</button></p>
+
+      <span class="label">결과표</span>
+      <div class="table-wrap"><table id="table"></table></div>
+    </div>
+  </section>
+
+  <section id="history-block" hidden>
+    <span class="label">실행 기록 (이 화면에서만 남는다)</span>
+    <ol class="history" id="history"></ol>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let currentQuestion = "";
+
+  async function ask(body) {
+    $("error").hidden = true;
+    for (const b of [$("ask-button"), $("rerun-button")]) b.disabled = true;
+    try {
+      const response = await fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+        throw new Error(detail);
+      }
+      show(data);
+      remember(data);
+    } catch (e) {
+      $("error").textContent = e.message;
+      $("error").hidden = false;
+    } finally {
+      for (const b of [$("ask-button"), $("rerun-button")]) b.disabled = false;
+    }
+  }
+
+  function show(data) {
+    $("result").hidden = false;
+    $("answer").textContent = data.answer;
+    $("edited").hidden = !data.edited;
+    $("reason").hidden = !data.reason;
+    $("reason").textContent = data.reason;
+    $("interpretation").value = data.interpretation;
+    $("sql-block").hidden = !data.answerable;
+    $("sql").value = data.sql || "";
+    renderTable(data.columns, data.rows);
+  }
+
+  function renderTable(columns, rows) {
+    const table = $("table");
+    table.replaceChildren();
+    const head = table.createTHead().insertRow();
+    for (const name of columns) {
+      const th = document.createElement("th");
+      th.textContent = name;
+      head.appendChild(th);
+    }
+    const body = table.createTBody();
+    for (const row of rows) {
+      const tr = body.insertRow();
+      for (const value of row) {
+        const td = tr.insertCell();
+        const isNumber = typeof value === "number";
+        td.textContent = value === null ? "NULL" : isNumber ? value.toLocaleString("ko-KR") : String(value);
+        if (isNumber) td.className = "num";
+      }
+    }
+  }
+
+  function remember(data) {
+    const li = document.createElement("li");
+    const head = document.createElement("div");
+    head.textContent = `${data.edited ? "[고침] " : ""}${data.question} → ${data.answer} · 해석: ${data.interpretation}`;
+    li.appendChild(head);
+    if (data.sql) {
+      const code = document.createElement("code");
+      code.textContent = data.sql;
+      li.appendChild(code);
+    }
+    $("history").prepend(li);
+    $("history-block").hidden = false;
+  }
+
+  $("ask-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    currentQuestion = $("question").value.trim();
+    if (currentQuestion) ask({ question: currentQuestion });
+  });
+
+  $("rerun-button").addEventListener("click", () => {
+    ask({ question: currentQuestion, sql: $("sql").value, interpretation: $("interpretation").value });
+  });
+</script>
+</body>
+</html>

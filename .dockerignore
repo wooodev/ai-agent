@@ -1,0 +1,7 @@
+# 이미지에 비밀과 원본 데이터를 넣지 않는다
+.env
+data/
+.git/
+.venv/
+__pycache__/
+*.pyc
